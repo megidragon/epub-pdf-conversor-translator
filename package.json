@@ -1,0 +1,22 @@
+{
+  "name": "epub-converter",
+  "version": "1.0.0",
+  "description": "Convert large EPUB books to PDF or plain text, with content cleaning",
+  "type": "module",
+  "scripts": {
+    "to-pdf": "node convert.js",
+    "to-txt": "node to-text.js",
+    "clean": "node clean-text.js",
+    "translate": "node translate.js",
+    "txt-to-pdf": "node txt-to-pdf.js"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^4.3.4",
+    "google-translate-api-x": "^10.7.1",
+    "html-entities": "^2.6.0",
+    "jszip": "^3.10.1",
+    "pdf-lib": "^1.17.1",
+    "pdfkit": "^0.15.1",
+    "puppeteer": "^22.0.0"
+  }
+}

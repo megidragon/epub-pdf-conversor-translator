@@ -1,0 +1,53 @@
+{
+  "_comment": "Rules for cleaning unwanted content from text files",
+
+  "blocks": [
+    {
+      "label": "Novelupdate rating request",
+      "text": "Your invaluable feedback and ratings mean the world to me. Please\ntake a moment to rate this novel at Novelupdate.\nIf you come across any mistakes within this chapter, kindly notify me\nin the comments below, so that I can make the necessary corrections."
+    }
+  ],
+
+  "linePatterns": [
+    {
+      "label": "Rate/review on Novelupdate",
+      "pattern": "rate this novel at Novelupdate",
+      "flags": "i"
+    },
+    {
+      "label": "Patreon promotions",
+      "pattern": "patreon\\.com",
+      "flags": "i"
+    },
+    {
+      "label": "Ko-fi promotions",
+      "pattern": "ko-fi\\.com",
+      "flags": "i"
+    },
+    {
+      "label": "Support me on lines",
+      "pattern": "support me (on|at|by)",
+      "flags": "i"
+    },
+    {
+      "label": "Join Discord server",
+      "pattern": "join (my|our|the) discord",
+      "flags": "i"
+    },
+    {
+      "label": "Translator notes begging",
+      "pattern": "please (leave|give|write).*review",
+      "flags": "i"
+    }
+  ],
+
+  "replacements": [
+    {
+      "label": "Double spaces",
+      "find": "  +",
+      "replaceWith": " ",
+      "regex": true,
+      "flags": "g"
+    }
+  ]
+}
