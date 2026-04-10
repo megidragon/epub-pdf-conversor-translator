@@ -38,10 +38,41 @@
       "label": "Translator notes begging",
       "pattern": "please (leave|give|write).*review",
       "flags": "i"
+    },
+    {
+      "label": "Bullet point lines (•)",
+      "pattern": "^\\s*•",
+      "flags": ""
+    },
+    {
+      "label": "Thank you ~ lines",
+      "pattern": "^\\s*Thank you\\s*~",
+      "flags": "i"
+    },
+    {
+      "label": "PS: lines",
+      "pattern": "^\\s*PS:",
+      "flags": ""
+    },
+    {
+      "label": "¡Gracias ~",
+      "pattern": "^\\s*¡Gracias\\s*~",
+      "flags": "i"
+    },
+    {
+      "label": "PD: lines",
+      "pattern": "^\\s*PD:",
+      "flags": ""
     }
   ],
 
   "replacements": [
+    {
+      "label": "Astronomía flotante",
+      "find": "Astronomía flotante",
+      "replaceWith": "",
+      "regex": false
+    },
     {
       "label": "Double spaces",
       "find": "  +",

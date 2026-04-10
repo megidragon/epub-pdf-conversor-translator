@@ -173,8 +173,25 @@ function stripTags(html) {
   return html.replace(/<[^>]*>/g, "");
 }
 
+// ── Extract chapter title from HTML ───────────────────────────────────────
+function extractChapterTitle(html) {
+  // Try <title> tag first
+  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  if (titleMatch) {
+    const t = decode(stripTags(titleMatch[1])).trim();
+    if (t) return t;
+  }
+  // Try first heading (h1–h3)
+  const headingMatch = html.match(/<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/i);
+  if (headingMatch) {
+    const t = decode(stripTags(headingMatch[1])).trim();
+    if (t) return t;
+  }
+  return null;
+}
+
 // ── Main conversion ────────────────────────────────────────────────────────
-async function convertToText(epubPath, outputPath) {
+async function convertToText(epubPath, outputPath, { addChapters = true } = {}) {
   const { zip, spineItems, title, author } = await parseEpub(epubPath);
   const totalChapters = spineItems.length;
 
@@ -218,8 +235,14 @@ async function convertToText(epubPath, outputPath) {
     const text = htmlToText(html);
     if (!text || text.length < 2) continue;
 
-    // Write chapter separator + text
-    await fd.write(`\n\n${text}\n`);
+    // Write chapter header + text
+    let chapterHeader = "";
+    if (addChapters) {
+      const chapterTitle = extractChapterTitle(html) || fileName.replace(/\.[^.]+$/, "");
+      const label = `  Chapter ${processedChapters}: ${chapterTitle}`;
+      chapterHeader = `\n\n${"═".repeat(60)}\n${label}\n${"═".repeat(60)}\n`;
+    }
+    await fd.write(`${chapterHeader}\n\n${text}\n`);
     totalChars += text.length;
   }
 
@@ -235,7 +258,12 @@ async function convertToText(epubPath, outputPath) {
 }
 
 // ── CLI ────────────────────────────────────────────────────────────────────
-const args = process.argv.slice(2);
+const rawArgs = process.argv.slice(2);
+
+// Parse flags
+const noChapters = rawArgs.includes("--no-chapters");
+const args = rawArgs.filter((a) => !a.startsWith("--"));
+
 if (args.length < 1) {
   console.log(`
 ╔══════════════════════════════════════════════════════════╗
@@ -245,11 +273,15 @@ if (args.length < 1) {
 ╚══════════════════════════════════════════════════════════╝
 
 Usage:
-  node to-text.js <input.epub> [output.txt]
+  node to-text.js <input.epub> [output.txt] [options]
+
+Options:
+  --no-chapters   Skip chapter headers between sections
 
 Examples:
   node to-text.js book.epub
   node to-text.js book.epub book.txt
+  node to-text.js book.epub book.txt --no-chapters
 `);
   process.exit(1);
 }
@@ -267,6 +299,6 @@ try {
 }
 
 const startTime = Date.now();
-await convertToText(inputEpub, outputTxt);
+await convertToText(inputEpub, outputTxt, { addChapters: !noChapters });
 const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 console.log(`   Time: ${elapsed}s`);
