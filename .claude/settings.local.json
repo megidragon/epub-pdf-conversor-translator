@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node *)",
+      "PowerShell(node clean-text.js \"docs\\\\The-hivemind-is-conquering-for-me.txt\" \"docs\\\\_test_clean.txt\")",
+      "PowerShell(node _fix.cjs)",
+      "PowerShell(node clean-text.js \"docs\\\\The-hivemind-is-conquering-for-me.txt\" \"docs\\\\_test_clean.txt\" --rules clean-rules.json)",
+      "PowerShell(node -e \"const fs=require\\('fs'\\);const text=fs.readFileSync\\('docs/_test_clean.txt','utf-8'\\);const chars=new Set\\(\\);for\\(const c of text\\){const code=c.codePointAt\\(0\\);if\\(code>127\\)chars.add\\(c+' \\(U+'+code.toString\\(16\\).toUpperCase\\(\\)+'\\)'\\);}console.log\\('Non-ASCII chars remaining:',chars.size\\);console.log\\([...chars].slice\\(0,40\\).join\\(' | '\\)\\);\")"
+    ]
+  }
+}

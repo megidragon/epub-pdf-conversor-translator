@@ -215,9 +215,14 @@ async function convertTxtToPdf(inputPath, outputPath, options = {}) {
         .fillColor("#999999");
       const bottomY = doc.page.height - cfg.margins.bottom + 20;
       const pageWidth = doc.page.width;
+      // height + lineBreak:false prevent PDFKit from auto-adding a new page
+      // when bottomY sits below the writable area (which would otherwise make
+      // the LineWrapper compute a negative remaining height and paginate).
       doc.text(`— ${pageNum} —`, 0, bottomY, {
         width: pageWidth,
         align: "center",
+        lineBreak: false,
+        height: cfg.pageNumberSize * 2,
       });
       doc.fillColor("#000000");
     }

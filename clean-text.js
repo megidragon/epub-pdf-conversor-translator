@@ -3,20 +3,19 @@ import path from "path";
 import readline from "readline";
 import { createReadStream, createWriteStream } from "fs";
 
-// ── Default rules file ─────────────────────────────────────────────────────
+// Default rules file
 const DEFAULT_RULES_PATH = path.join(
   path.dirname(new URL(import.meta.url).pathname),
   "clean-rules.json"
 );
 
-// ── Load rules ─────────────────────────────────────────────────────────────
+// Load rules
 async function loadRules(rulesPath) {
   const raw = await fs.readFile(rulesPath, "utf-8");
   const rules = JSON.parse(raw);
 
   const compiled = [];
 
-  // 1. Exact multi-line blocks to remove
   if (rules.blocks) {
     for (const block of rules.blocks) {
       compiled.push({
@@ -27,7 +26,6 @@ async function loadRules(rulesPath) {
     }
   }
 
-  // 2. Line-level patterns: remove any line matching these regex patterns
   if (rules.linePatterns) {
     for (const entry of rules.linePatterns) {
       compiled.push({
@@ -38,7 +36,6 @@ async function loadRules(rulesPath) {
     }
   }
 
-  // 3. Substring replacements (e.g., remove inline ads, fix OCR errors)
   if (rules.replacements) {
     for (const entry of rules.replacements) {
       compiled.push({
@@ -54,14 +51,76 @@ async function loadRules(rulesPath) {
   return compiled;
 }
 
-// ── Apply rules ────────────────────────────────────────────────────────────
+// Sanitize corrupted / unusual characters.
+// Keeps: ASCII printable, accented Latin letters, normal punctuation, line breaks, tabs.
+// Removes/normalizes: zalgo combining marks, box drawing, weird whitespace,
+// zero-width chars, control chars, miscellaneous symbols and dingbats.
+const SANITIZE_PASSES = [
+  {
+    label: "Weird whitespace -> space",
+    // NBSP, OGHAM, EN/EM/THIN/HAIR spaces, NARROW NBSP, MMSP, IDEOGRAPHIC SPACE
+    regex: new RegExp("[\\u00A0\\u1680\\u2000-\\u200A\\u202F\\u205F\\u3000]", "g"),
+    replaceWith: " ",
+  },
+  {
+    label: "Zero-width / formatting chars",
+    // ZWSP/ZWNJ/ZWJ/LRM/RLM, LINE SEP, PARA SEP, WORD JOINER, BIDI/INVISIBLE, BOM
+    regex: new RegExp("[\\u200B-\\u200F\\u2028\\u2029\\u2060-\\u206F\\uFEFF]", "g"),
+    replaceWith: "",
+  },
+  {
+    label: "Control chars",
+    regex: new RegExp("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F\\x7F-\\x9F]", "g"),
+    replaceWith: "",
+  },
+  {
+    label: "Combining marks (zalgo)",
+    // Stripped after NFC: any leftover combining mark is decorative noise
+    regex: new RegExp("[\\u0300-\\u036F\\u1AB0-\\u1AFF\\u1DC0-\\u1DFF\\u20D0-\\u20FF\\uFE20-\\uFE2F]", "g"),
+    replaceWith: "",
+  },
+  {
+    label: "Box drawing / blocks / geometric",
+    regex: new RegExp("[\\u2500-\\u25FF]", "g"),
+    replaceWith: "",
+  },
+  {
+    label: "Misc symbols / dingbats",
+    regex: new RegExp("[\\u2600-\\u27BF]", "g"),
+    replaceWith: "",
+  },
+];
+
+function sanitizeText(text, stats) {
+  // NFC merges decomposed accents (e + combining acute) into precomposed
+  // letters (é), so legitimate accents survive while standalone combining
+  // marks remain identifiable as zalgo and get stripped below.
+  let result = text.normalize("NFC");
+
+  for (const pass of SANITIZE_PASSES) {
+    const matches = result.match(pass.regex);
+    if (matches) {
+      stats.set(pass.label, (stats.get(pass.label) || 0) + matches.length);
+      result = result.replace(pass.regex, pass.replaceWith);
+    }
+  }
+
+  return result;
+}
+
+// Apply rules
 function applyRules(text, rules) {
-  let result = text;
   const stats = new Map();
 
   for (const rule of rules) {
     stats.set(rule.label, 0);
   }
+  for (const pass of SANITIZE_PASSES) {
+    stats.set(pass.label, 0);
+  }
+
+  // Pass 0: Sanitize corrupted characters before any rule matching
+  let result = sanitizeText(text, stats);
 
   // Pass 1: Remove exact multi-line blocks
   for (const rule of rules) {
@@ -116,27 +175,25 @@ function applyRules(text, rules) {
 
   result = filtered.join("\n");
 
-  // Clean up excessive blank lines left by removals
   result = result.replace(/\n{4,}/g, "\n\n\n");
 
   return { result, stats };
 }
 
-// ── Stream-based processing for huge files ─────────────────────────────────
+// Stream-based processing for huge files
 async function cleanFile(inputPath, outputPath, rulesPath) {
-  console.log(`📋 Loading rules from: ${rulesPath}`);
+  console.log(`Loading rules from: ${rulesPath}`);
   const rules = await loadRules(rulesPath);
   console.log(`   Loaded ${rules.length} rules:\n`);
   for (const rule of rules) {
-    const typeIcon = { block: "🔲", linePattern: "📏", replacement: "🔄" };
-    console.log(`   ${typeIcon[rule.type] || "•"} [${rule.type}] ${rule.label}`);
+    const typeIcon = { block: "[block]", linePattern: "[line] ", replacement: "[repl] " };
+    console.log(`   ${typeIcon[rule.type] || "*"} ${rule.label}`);
   }
 
   const inputStats = await fs.stat(inputPath);
   const sizeMb = (inputStats.size / 1024 / 1024).toFixed(2);
-  console.log(`\n📄 Input: ${inputPath} (${sizeMb} MB)`);
+  console.log(`\nInput: ${inputPath} (${sizeMb} MB)`);
 
-  // For very large files (>50MB), process in chunks; otherwise load entirely
   const CHUNK_THRESHOLD = 50 * 1024 * 1024;
 
   if (inputStats.size > CHUNK_THRESHOLD) {
@@ -152,8 +209,6 @@ async function cleanFile(inputPath, outputPath, rulesPath) {
 }
 
 async function cleanFileStreaming(inputPath, outputPath, rules) {
-  // For streaming, we need to handle multi-line blocks differently.
-  // We buffer a window of lines large enough to catch any block pattern.
   const maxBlockLines = Math.max(
     ...rules.filter((r) => r.type === "block").map((r) => r.text.split("\n").length),
     1
@@ -168,6 +223,7 @@ async function cleanFileStreaming(inputPath, outputPath, rules) {
   const outStream = createWriteStream(outputPath, { encoding: "utf-8" });
   const stats = new Map();
   for (const rule of rules) stats.set(rule.label, 0);
+  for (const pass of SANITIZE_PASSES) stats.set(pass.label, 0);
 
   const lineBuffer = [];
   let totalLines = 0;
@@ -188,7 +244,6 @@ async function cleanFileStreaming(inputPath, outputPath, rules) {
     }
   }
 
-  // Flush remaining buffer
   while (lineBuffer.length > 0) {
     const processed = processBufferLine(lineBuffer, rules, stats);
     if (processed !== null) {
@@ -204,32 +259,28 @@ async function cleanFileStreaming(inputPath, outputPath, rules) {
 }
 
 function processBufferLine(buffer, rules, stats) {
-  const line = buffer.shift();
+  const line = sanitizeText(buffer.shift(), stats);
 
-  // Check line-level patterns
   for (const rule of rules) {
     if (rule.type !== "linePattern") continue;
     if (rule.regex.test(line)) {
       stats.set(rule.label, (stats.get(rule.label) || 0) + 1);
-      return null; // skip this line
+      return null;
     }
   }
 
-  // Check if this line starts a block match
   for (const rule of rules) {
     if (rule.type !== "block") continue;
     const blockLines = rule.text.split("\n");
     const windowText = [line, ...buffer.slice(0, blockLines.length - 1)].join("\n");
     if (windowText.startsWith(rule.text)) {
-      // Remove the matched lines from the buffer
-      const linesToRemove = blockLines.length - 1; // -1 because current line is already shifted
+      const linesToRemove = blockLines.length - 1;
       buffer.splice(0, linesToRemove);
       stats.set(rule.label, (stats.get(rule.label) || 0) + 1);
       return null;
     }
   }
 
-  // Apply replacements
   let processedLine = line;
   for (const rule of rules) {
     if (rule.type !== "replacement") continue;
@@ -254,10 +305,10 @@ async function printStats(stats, inputPath, outputPath) {
   const inputStats = await fs.stat(inputPath);
   const outputStats = await fs.stat(outputPath);
 
-  console.log(`\n📊 Cleaning results:\n`);
+  console.log(`\nCleaning results:\n`);
   for (const [label, count] of stats) {
     if (count > 0) {
-      console.log(`   ✂  ${label}: ${count} occurrence${count !== 1 ? "s" : ""} removed`);
+      console.log(`   - ${label}: ${count} occurrence${count !== 1 ? "s" : ""} removed`);
     }
   }
 
@@ -266,18 +317,17 @@ async function printStats(stats, inputPath, outputPath) {
   console.log(`\n   Input:   ${(inputStats.size / 1024).toFixed(0)} KB`);
   console.log(`   Output:  ${(outputStats.size / 1024).toFixed(0)} KB`);
   console.log(`   Removed: ${(removed / 1024).toFixed(0)} KB (${pct}%)`);
-  console.log(`\n✅ Cleaned file saved to: ${outputPath}`);
+  console.log(`\nCleaned file saved to: ${outputPath}`);
 }
 
-// ── CLI ────────────────────────────────────────────────────────────────────
+// CLI
 const args = process.argv.slice(2);
 if (args.length < 1) {
   console.log(`
-╔══════════════════════════════════════════════════════════╗
-║              Text Content Cleaner                        ║
-║  Remove unwanted text from plain text files based on     ║
-║  configurable rules (blocks, patterns, replacements).    ║
-╚══════════════════════════════════════════════════════════╝
+Text Content Cleaner
+  Remove unwanted text from plain text files based on configurable rules
+  (blocks, patterns, replacements). Also strips corrupted characters
+  (zalgo, box drawing, weird whitespace, zero-width, control chars).
 
 Usage:
   node clean-text.js <input.txt> [output.txt] [--rules <rules.json>]
@@ -291,14 +341,10 @@ Examples:
   node clean-text.js book.txt
   node clean-text.js book.txt book_clean.txt
   node clean-text.js book.txt --rules my-rules.json
-
-Rules file format (clean-rules.json):
-  See clean-rules.json for a full example with all rule types.
 `);
   process.exit(1);
 }
 
-// Parse args
 let inputFile = null;
 let outputFile = null;
 let rulesFile = DEFAULT_RULES_PATH;
@@ -322,14 +368,14 @@ if (!outputFile) {
 try {
   await fs.access(inputFile);
 } catch {
-  console.error(`❌ File not found: ${inputFile}`);
+  console.error(`File not found: ${inputFile}`);
   process.exit(1);
 }
 
 try {
   await fs.access(rulesFile);
 } catch {
-  console.error(`❌ Rules file not found: ${rulesFile}`);
+  console.error(`Rules file not found: ${rulesFile}`);
   console.error(`   Create one or use --rules to specify its path.`);
   process.exit(1);
 }

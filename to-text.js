@@ -239,7 +239,7 @@ async function convertToText(epubPath, outputPath, { addChapters = true } = {}) 
     let chapterHeader = "";
     if (addChapters) {
       const chapterTitle = extractChapterTitle(html) || fileName.replace(/\.[^.]+$/, "");
-      const label = `  Chapter ${processedChapters}: ${chapterTitle}`;
+      const label = `  Chapter ${processedChapters}:`; // ${chapterTitle}
       chapterHeader = `\n\n${"═".repeat(60)}\n${label}\n${"═".repeat(60)}\n`;
     }
     await fd.write(`${chapterHeader}\n\n${text}\n`);
