@@ -8,7 +8,8 @@
     "to-txt": "node to-text.js",
     "clean": "node clean-text.js",
     "translate": "node translate.js",
-    "txt-to-pdf": "node txt-to-pdf.js"
+    "txt-to-pdf": "node txt-to-pdf.js",
+    "process": "node process-epub.js"
   },
   "dependencies": {
     "fast-xml-parser": "^4.3.4",
