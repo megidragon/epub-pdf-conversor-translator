@@ -8,7 +8,9 @@
     "to-txt": "node to-text.js",
     "clean": "node clean-text.js",
     "translate": "node translate.js",
+    "translate-html": "node translate-html.js",
     "txt-to-pdf": "node txt-to-pdf.js",
+    "to-pdf-translated": "node convert-translated.js",
     "process": "node process-epub.js"
   },
   "dependencies": {

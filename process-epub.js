@@ -49,19 +49,26 @@ Options:
   --from <lang>      Source language (default: en)
   --to <lang>        Target language (default: es)
   --rules <file>     Cleaning rules file (default: clean-rules.json)
+  --keep-images      Preserve the original EPUB images in the PDF, in their
+                     correct positions (translates the book in HTML form
+                     instead of going through plain text)
   --no-clean         Skip the cleaning step
   --no-translate     Skip the translation step
   --no-pdf           Skip the PDF generation step
   --help             Show this help
 
-Pipeline:
+Default pipeline (plain text, images become "[Image]" markers):
   1. to-text.js      <book>.epub          -> <book>.txt
   2. clean-text.js   <book>.txt           -> <book>_cleaned.txt
   3. translate.js    <book>_cleaned.txt   -> <book>_cleaned_<to>.txt
   4. txt-to-pdf.js   <book>_cleaned_<to>.txt -> .pdf
 
-Example:
-  node process-epub.js docs/The-hivemind-is-conquering-for-me.epub --from en --to es
+With --keep-images (single step, images preserved):
+  convert-translated.js  <book>.epub  ->  <book>_<to>.pdf
+
+Examples:
+  node process-epub.js docs/book.epub --from en --to es
+  node process-epub.js docs/book.epub --keep-images --from en --to es
 `);
   process.exit(args.length < 1 ? 1 : 0);
 }
@@ -73,12 +80,14 @@ let rulesFile = path.join(SCRIPT_DIR, "clean-rules.json");
 let doClean = true;
 let doTranslate = true;
 let doPdf = true;
+let keepImages = false;
 
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
   if (a === "--from" && args[i + 1]) fromLang = args[++i];
   else if (a === "--to" && args[i + 1]) toLang = args[++i];
   else if (a === "--rules" && args[i + 1]) rulesFile = path.resolve(args[++i]);
+  else if (a === "--keep-images") keepImages = true;
   else if (a === "--no-clean") doClean = false;
   else if (a === "--no-translate") doTranslate = false;
   else if (a === "--no-pdf") doPdf = false;
@@ -104,6 +113,38 @@ if (doClean && !(await fileExists(rulesFile))) {
 
 const startTime = Date.now();
 let currentFile = inputEpub;
+
+// ── Image-preserving mode ──────────────────────────────────────────────────
+// Stays in HTML the whole way so the original images keep their positions.
+if (keepImages) {
+  try {
+    if (doTranslate) {
+      const cvtArgs = [inputEpub, "--from", fromLang, "--to", toLang];
+      if (doClean) cvtArgs.push("--rules", rulesFile);
+      else cvtArgs.push("--no-clean");
+      await runStep(
+        "EPUB → Translated PDF (images preserved)",
+        "convert-translated.js",
+        cvtArgs
+      );
+      currentFile = inputEpub.replace(/\.epub$/i, `_${toLang}.pdf`);
+    } else {
+      // No translation requested — just convert to PDF (images preserved).
+      await runStep("EPUB → PDF (images preserved)", "convert.js", [inputEpub]);
+      currentFile = inputEpub.replace(/\.epub$/i, ".pdf");
+    }
+
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.log(`\n${"═".repeat(60)}`);
+    console.log(`✅ Pipeline complete in ${elapsed}s`);
+    console.log(`   Final output: ${currentFile}`);
+    console.log("═".repeat(60));
+    process.exit(0);
+  } catch (err) {
+    console.error(`\n❌ Pipeline failed: ${err.message}`);
+    process.exit(1);
+  }
+}
 
 try {
   // 1. EPUB -> TXT
