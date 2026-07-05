@@ -5,8 +5,8 @@ import path from "path";
 // ── Configuration ──────────────────────────────────────────────────────────
 const DEFAULT_ENDPOINT = "http://localhost:1234/v1";
 const DEFAULT_TARGET_LANG = "ES";
-const DEFAULT_CHUNK_CHARS = 2500;   // chars per chunk sent to the model
-const SAVE_EVERY_N_CHUNKS = 10;     // save progress every N chunks
+const DEFAULT_CHUNK_CHARS = 4000;   // chars per chunk sent to the model
+const SAVE_EVERY_N_CHUNKS = 1;      // save after every chunk (local LLM inference is slow/expensive)
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function sleep(ms) {

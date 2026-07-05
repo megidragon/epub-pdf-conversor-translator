@@ -190,8 +190,153 @@ function extractChapterTitle(html) {
   return null;
 }
 
-// ── Main conversion ────────────────────────────────────────────────────────
-async function convertToText(epubPath, outputPath, { addChapters = true } = {}) {
+// ── Parse PDF structure ─────────────────────────────────────────────────────
+async function parsePdf(pdfPath) {
+  console.log(`📕 Reading PDF: ${pdfPath}`);
+  // Lazy-load pdfjs so EPUB conversions don't pay the cost of importing it.
+  const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const data = new Uint8Array(await fs.readFile(pdfPath));
+  const loadingTask = getDocument({ data, useSystemFonts: true, verbosity: 0 });
+  const doc = await loadingTask.promise;
+
+  let title = "";
+  let author = "";
+  try {
+    const meta = await doc.getMetadata();
+    title = meta?.info?.Title || "";
+    author = meta?.info?.Author || "";
+  } catch {
+    // Metadata is optional; ignore extraction errors.
+  }
+
+  console.log(`  Title: ${title || "(unknown)"}`);
+  console.log(`  Author: ${author || "(unknown)"}`);
+  console.log(`  Pages: ${doc.numPages}`);
+
+  return { doc, loadingTask, numPages: doc.numPages, title, author };
+}
+
+// ── Convert a PDF page's text items to plain text ───────────────────────────
+function pdfItemsToText(items) {
+  let out = "";
+  let lastY = null;
+  let lastEndX = null;
+  for (const item of items) {
+    if (typeof item.str !== "string") continue;
+    const str = item.str;
+    const x = item.transform[4];
+    const y = item.transform[5];
+
+    if (lastY !== null && Math.abs(lastY - y) > 1) {
+      // New visual line.
+      out += "\n";
+      lastEndX = null;
+    } else if (
+      lastEndX !== null &&
+      x - lastEndX > 1 &&
+      str.length > 0 &&
+      !out.endsWith(" ") &&
+      !str.startsWith(" ")
+    ) {
+      // Same line but a horizontal gap → insert a space between words.
+      out += " ";
+    }
+
+    out += str;
+
+    if (item.hasEOL) {
+      out += "\n";
+      lastY = null;
+      lastEndX = null;
+      continue;
+    }
+    lastY = y;
+    lastEndX = x + (item.width || 0);
+  }
+  return out;
+}
+
+// ── Whitespace cleanup shared by the PDF path ───────────────────────────────
+function tidyWhitespace(text) {
+  text = text.replace(/[ \t]+/g, " ");      // collapse horizontal spaces
+  text = text.replace(/ *\n */g, "\n");      // trim spaces around newlines
+  text = text.replace(/\n{4,}/g, "\n\n\n");  // max 3 consecutive newlines
+  return text.trim();
+}
+
+// ── Shared output helpers ───────────────────────────────────────────────────
+async function writeHeader(fd, { title, author, source }) {
+  const header = [
+    "=".repeat(60),
+    title ? `  ${title}` : "  (Untitled)",
+    author ? `  by ${author}` : "",
+    "=".repeat(60),
+    "",
+    `  Converted from ${source} on ${new Date().toISOString().split("T")[0]}`,
+    "",
+    "=".repeat(60),
+    "\n\n",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  await fd.write(header);
+}
+
+async function reportStats(outputPath, totalChars) {
+  const stats = await fs.stat(outputPath);
+  const sizeMb = (stats.size / 1024 / 1024).toFixed(2);
+  const sizeKb = (stats.size / 1024).toFixed(0);
+
+  console.log(`\n\n✅ Done! Output: ${outputPath}`);
+  console.log(`   Size: ${stats.size > 1048576 ? sizeMb + " MB" : sizeKb + " KB"}`);
+  console.log(`   Characters: ${totalChars.toLocaleString()}`);
+}
+
+// ── Main conversion: dispatch by file type ──────────────────────────────────
+async function convertToText(inputPath, outputPath, opts = {}) {
+  const ext = path.extname(inputPath).toLowerCase();
+  if (ext === ".pdf") {
+    return convertPdfToText(inputPath, outputPath, opts);
+  }
+  return convertEpubToText(inputPath, outputPath, opts);
+}
+
+async function convertPdfToText(pdfPath, outputPath, { addChapters = true } = {}) {
+  const { doc, loadingTask, numPages, title, author } = await parsePdf(pdfPath);
+
+  console.log(`\n📝 Converting ${numPages} pages to plain text...\n`);
+
+  const fd = await fs.open(outputPath, "w");
+  await writeHeader(fd, { title, author, source: "PDF" });
+
+  let totalChars = 0;
+  for (let i = 1; i <= numPages; i++) {
+    const progress = ((i / numPages) * 100).toFixed(1);
+    process.stdout.write(`\r  [${progress}%] Page ${i}/${numPages}          `);
+
+    const page = await doc.getPage(i);
+    const content = await page.getTextContent();
+    page.cleanup();
+
+    const text = tidyWhitespace(pdfItemsToText(content.items));
+    if (!text || text.length < 2) continue;
+
+    let pageHeader = "";
+    if (addChapters) {
+      pageHeader = `\n\n${"─".repeat(40)}\n  Page ${i}\n${"─".repeat(40)}\n`;
+    }
+    await fd.write(`${pageHeader}\n${text}\n`);
+    totalChars += text.length;
+  }
+
+  await loadingTask.destroy();
+  await fd.close();
+
+  console.log(`\n`);
+  await reportStats(outputPath, totalChars);
+}
+
+async function convertEpubToText(epubPath, outputPath, { addChapters = true } = {}) {
   const { zip, spineItems, title, author } = await parseEpub(epubPath);
   const totalChapters = spineItems.length;
 
@@ -200,22 +345,7 @@ async function convertToText(epubPath, outputPath, { addChapters = true } = {}) 
   // Open output file for writing (streaming to handle large books)
   const fd = await fs.open(outputPath, "w");
 
-  // Write header
-  const header = [
-    "=".repeat(60),
-    title ? `  ${title}` : "  (Untitled)",
-    author ? `  by ${author}` : "",
-    "=".repeat(60),
-    "",
-    `  Converted from EPUB on ${new Date().toISOString().split("T")[0]}`,
-    "",
-    "=".repeat(60),
-    "\n\n",
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-  await fd.write(header);
+  await writeHeader(fd, { title, author, source: "EPUB" });
 
   let totalChars = 0;
   let processedChapters = 0;
@@ -248,13 +378,7 @@ async function convertToText(epubPath, outputPath, { addChapters = true } = {}) 
 
   await fd.close();
 
-  const stats = await fs.stat(outputPath);
-  const sizeMb = (stats.size / 1024 / 1024).toFixed(2);
-  const sizeKb = (stats.size / 1024).toFixed(0);
-
-  console.log(`\n\n✅ Done! Output: ${outputPath}`);
-  console.log(`   Size: ${stats.size > 1048576 ? sizeMb + " MB" : sizeKb + " KB"}`);
-  console.log(`   Characters: ${totalChars.toLocaleString()}`);
+  await reportStats(outputPath, totalChars);
 }
 
 // ── CLI ────────────────────────────────────────────────────────────────────
@@ -267,38 +391,46 @@ const args = rawArgs.filter((a) => !a.startsWith("--"));
 if (args.length < 1) {
   console.log(`
 ╔══════════════════════════════════════════════════════════╗
-║              EPUB → Plain Text Converter                 ║
+║           EPUB / PDF → Plain Text Converter              ║
 ║  Extracts all text content preserving reading order      ║
 ║  and basic structure (headings, lists, paragraphs).      ║
 ╚══════════════════════════════════════════════════════════╝
 
 Usage:
-  node to-text.js <input.epub> [output.txt] [options]
+  node to-text.js <input.epub|input.pdf> [output.txt] [options]
 
 Options:
-  --no-chapters   Skip chapter headers between sections
+  --no-chapters   Skip chapter/page headers between sections
 
 Examples:
   node to-text.js book.epub
+  node to-text.js book.pdf
   node to-text.js book.epub book.txt
-  node to-text.js book.epub book.txt --no-chapters
+  node to-text.js book.pdf book.txt --no-chapters
 `);
   process.exit(1);
 }
 
-const inputEpub = path.resolve(args[0]);
+const inputFile = path.resolve(args[0]);
+const inputExt = path.extname(inputFile).toLowerCase();
+
+if (inputExt !== ".epub" && inputExt !== ".pdf") {
+  console.error(`❌ Unsupported file type: ${inputExt || "(none)"} — expected .epub or .pdf`);
+  process.exit(1);
+}
+
 const outputTxt = args[1]
   ? path.resolve(args[1])
-  : inputEpub.replace(/\.epub$/i, ".txt");
+  : inputFile.replace(/\.(epub|pdf)$/i, ".txt");
 
 try {
-  await fs.access(inputEpub);
+  await fs.access(inputFile);
 } catch {
-  console.error(`❌ File not found: ${inputEpub}`);
+  console.error(`❌ File not found: ${inputFile}`);
   process.exit(1);
 }
 
 const startTime = Date.now();
-await convertToText(inputEpub, outputTxt, { addChapters: !noChapters });
+await convertToText(inputFile, outputTxt, { addChapters: !noChapters });
 const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 console.log(`   Time: ${elapsed}s`);

@@ -15,6 +15,16 @@
       "flags": "i"
     },
     {
+      "label": "Rate/review",
+      "pattern": "Please report us if you find any errors so we can fix it asap!",
+      "flags": "i"
+    },
+    {
+      "label": "Rate/review es",
+      "pattern": "¡Infórmenos si encuentra algún error para que podamos solucionarlo lo antes posible!",
+      "flags": "i"
+    },
+    {
       "label": "Patreon promotions",
       "pattern": "patreon\\.com",
       "flags": "i"
